@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
 
 export default function useSocket(username) {
   const socketRef = useRef(null);
   const prevConnectionIdsRef = useRef([]);
+  const lastEmitRef = useRef(0);  // throttle ref
 
   const [messages, setMessages] = useState([]);
   const [players, setPlayers] = useState({});
@@ -13,11 +14,7 @@ export default function useSocket(username) {
 
   useEffect(() => {
     if (!toast) return;
-
-    const timer = setTimeout(() => {
-      setToast(null);
-    }, 2200);
-
+    const timer = setTimeout(() => setToast(null), 2200);
     return () => clearTimeout(timer);
   }, [toast]);
 
@@ -43,10 +40,7 @@ export default function useSocket(username) {
       const prevIds = prevConnectionIdsRef.current;
       const nextIds = nearbyPlayers.map((p) => p.id);
 
-      const newlyConnected = nearbyPlayers.filter(
-        (p) => !prevIds.includes(p.id)
-      );
-
+      const newlyConnected = nearbyPlayers.filter((p) => !prevIds.includes(p.id));
       const disconnected = prevIds.filter((id) => !nextIds.includes(id));
 
       if (newlyConnected.length > 0) {
@@ -55,10 +49,7 @@ export default function useSocket(username) {
           text: `Connected to ${newlyConnected.map((p) => p.name).join(", ")}`,
         });
       } else if (disconnected.length > 0 && nextIds.length === 0) {
-        setToast({
-          type: "disconnected",
-          text: "Disconnected from nearby users",
-        });
+        setToast({ type: "disconnected", text: "Disconnected from nearby users" });
       }
 
       prevConnectionIdsRef.current = nextIds;
@@ -73,6 +64,7 @@ export default function useSocket(username) {
       socket.disconnect();
       socketRef.current = null;
       prevConnectionIdsRef.current = [];
+      lastEmitRef.current = 0;
       setMessages([]);
       setPlayers({});
       setConnections([]);
@@ -81,10 +73,13 @@ export default function useSocket(username) {
     };
   }, [username]);
 
-  const sendMove = (x, y) => {
-    if (!socketRef.current) return;
-    socketRef.current.emit("player:move", { x, y });
-  };
+  // Throttled to 30 updates/sec — smooth enough, doesn't flood server
+  const sendMove = useCallback((x, y) => {
+    const now = Date.now();
+    if (now - lastEmitRef.current < 33) return;
+    lastEmitRef.current = now;
+    socketRef.current?.emit("player:move", { x, y });
+  }, []);
 
   return {
     socket: socketRef.current,
