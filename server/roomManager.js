@@ -1,4 +1,4 @@
-import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../shared/constants.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from './constants.js';
 
 const players = new Map();
 const rooms   = new Map();

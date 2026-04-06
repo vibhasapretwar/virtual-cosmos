@@ -1,0 +1,4 @@
+export const PROXIMITY_RADIUS = 150;
+export const CANVAS_WIDTH     = 1200;
+export const CANVAS_HEIGHT    = 800;
+export const PLAYER_SPEED     = 4;
