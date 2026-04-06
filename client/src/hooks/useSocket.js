@@ -24,7 +24,10 @@ export default function useSocket(username) {
   useEffect(() => {
     if (!username) return;
 
-    const socket = io("http://localhost:3001");
+    const socket = io(import.meta.env.VITE_SERVER_URL, {
+      transports: ["websocket"],
+    });
+
     socketRef.current = socket;
 
     socket.on("connect", () => {
@@ -44,9 +47,7 @@ export default function useSocket(username) {
         (p) => !prevIds.includes(p.id)
       );
 
-      const disconnected = prevIds.filter(
-        (id) => !nextIds.includes(id)
-      );
+      const disconnected = prevIds.filter((id) => !nextIds.includes(id));
 
       if (newlyConnected.length > 0) {
         setToast({
