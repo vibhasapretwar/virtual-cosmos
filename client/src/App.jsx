@@ -3,7 +3,7 @@ import UsernameModal from "./components/UsernameModal";
 import GameCanvas from "./components/GameCanvas";
 import ChatPanel from "./components/ChatPanel";
 import useSocket from "./hooks/useSocket";
-import useProximity from "./hooks/useProximity";
+// import useProximity from "./hooks/useProximity";
 
 export default function App() {
   const [username, setUsername] = useState("");
