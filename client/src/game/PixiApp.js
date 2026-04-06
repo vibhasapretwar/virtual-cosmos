@@ -4,7 +4,7 @@ import {
   CANVAS_WIDTH,
   CANVAS_HEIGHT,
   PLAYER_SPEED,
-} from "../../../shared/constants.js";
+} from "../constants.js";
 
 export class PixiApp {
   constructor(onMove) {

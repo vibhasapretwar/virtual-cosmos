@@ -1,5 +1,5 @@
 import * as PIXI from "pixi.js";
-import { PROXIMITY_RADIUS } from "../../../shared/constants.js";
+import { PROXIMITY_RADIUS } from "../constants.js";
 
 export class PlayerSprite {
   constructor(id, name, isSelf = false) {
