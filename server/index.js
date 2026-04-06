@@ -1,11 +1,37 @@
+import 'dotenv/config';
 import express from "express";
 import http from "http";
 import cors from "cors";
 import { Server } from "socket.io";
+import mongoose from "mongoose";
 import { PROXIMITY_RADIUS } from "./constants.js";
+
+// MongoDB Models
+const messageSchema = new mongoose.Schema({
+  roomKey:  { type: String, required: true, index: true },
+  from:     { type: String, required: true },
+  username: { type: String, required: true },
+  text:     { type: String, required: true },
+  ts:       { type: Date, default: Date.now },
+});
+const Message = mongoose.model('Message', messageSchema);
+
+const sessionSchema = new mongoose.Schema({
+  socketId: { type: String, required: true, unique: true },
+  name:     { type: String, required: true },
+  joinedAt: { type: Date, default: Date.now },
+  leftAt:   { type: Date, default: null },
+});
+const Session = mongoose.model('Session', sessionSchema);
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB error:', err));
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const server = http.createServer(app);
 
@@ -21,6 +47,18 @@ const connections = {};
 
 app.get("/", (req, res) => {
   res.send("Virtual Cosmos server is running");
+});
+
+// REST endpoint — fetch chat history between two players
+app.get("/history/:roomKey", async (req, res) => {
+  try {
+    const messages = await Message.find({ roomKey: req.params.roomKey })
+      .sort({ ts: 1 })
+      .limit(50);
+    res.json(messages);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch history" });
+  }
 });
 
 function distance(a, b) {
@@ -40,15 +78,11 @@ function recomputeConnections() {
     for (let j = i + 1; j < ids.length; j++) {
       const id1 = ids[i];
       const id2 = ids[j];
-
       const p1 = players[id1];
       const p2 = players[id2];
-
       if (!p1 || !p2) continue;
 
-      const dist = distance(p1, p2);
-
-      if (dist <= PROXIMITY_RADIUS) {
+      if (distance(p1, p2) <= PROXIMITY_RADIUS) {
         connections[id1].push(id2);
         connections[id2].push(id1);
       }
@@ -59,16 +93,10 @@ function recomputeConnections() {
 function emitConnections() {
   for (const socketId of Object.keys(players)) {
     const nearbyIds = connections[socketId] || [];
-
     const nearbyPlayers = nearbyIds
       .map((id) => players[id])
       .filter(Boolean)
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        x: p.x,
-        y: p.y,
-      }));
+      .map((p) => ({ id: p.id, name: p.name, x: p.x, y: p.y }));
 
     io.to(socketId).emit("connections:update", nearbyPlayers);
   }
@@ -83,7 +111,7 @@ function updateWorldState() {
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  socket.on("player:join", (name) => {
+  socket.on("player:join", async (name) => {
     const safeName =
       typeof name === "string" && name.trim() ? name.trim() : "Anonymous";
 
@@ -99,8 +127,14 @@ io.on("connection", (socket) => {
 
     connections[socket.id] = [];
 
-    console.log(`${safeName} joined`);
+    // Save session to MongoDB
+    try {
+      await Session.create({ socketId: socket.id, name: safeName });
+    } catch (err) {
+      console.error('Session save error:', err);
+    }
 
+    console.log(`${safeName} joined`);
     updateWorldState();
 
     io.emit("chat:message", {
@@ -113,14 +147,12 @@ io.on("connection", (socket) => {
 
   socket.on("player:move", ({ x, y }) => {
     if (!players[socket.id]) return;
-
     players[socket.id].x = x;
     players[socket.id].y = y;
-
     updateWorldState();
   });
 
-  socket.on("chat:message", (msg) => {
+  socket.on("chat:message", async (msg) => {
     if (!players[socket.id]) return;
 
     const text = typeof msg?.text === "string" ? msg.text.trim() : "";
@@ -130,29 +162,55 @@ io.on("connection", (socket) => {
     if (nearbyIds.length === 0) return;
 
     const finalMessage = {
-      id: Date.now(),
+      id:       Date.now(),
       username: players[socket.id].name,
       text,
-      time: new Date().toLocaleTimeString(),
+      time:     new Date().toLocaleTimeString(),
     };
 
-    io.to(socket.id).emit("chat:message", finalMessage);
-
+    // Build a stable room key from the two socket ids (sorted)
     for (const nearbyId of nearbyIds) {
+      const roomKey = [socket.id, nearbyId].sort().join(':');
+
+      // Persist message to MongoDB
+      try {
+        await Message.create({
+          roomKey,
+          from:     socket.id,
+          username: players[socket.id].name,
+          text,
+        });
+      } catch (err) {
+        console.error('Message save error:', err);
+      }
+
       io.to(nearbyId).emit("chat:message", finalMessage);
     }
+
+    // Also emit back to sender
+    io.to(socket.id).emit("chat:message", finalMessage);
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", async () => {
     const disconnectedPlayer = players[socket.id];
 
     if (disconnectedPlayer) {
       io.emit("chat:message", {
-        id: Date.now(),
+        id:       Date.now(),
         username: "System",
-        text: `${disconnectedPlayer.name} left the cosmos`,
-        time: new Date().toLocaleTimeString(),
+        text:     `${disconnectedPlayer.name} left the cosmos`,
+        time:     new Date().toLocaleTimeString(),
       });
+
+      // Mark session as ended in MongoDB
+      try {
+        await Session.findOneAndUpdate(
+          { socketId: socket.id },
+          { leftAt: new Date() }
+        );
+      } catch (err) {
+        console.error('Session update error:', err);
+      }
 
       delete players[socket.id];
       delete connections[socket.id];
@@ -172,7 +230,6 @@ io.on("connection", (socket) => {
 });
 
 const PORT = process.env.PORT || 3001;
-
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
